@@ -1,0 +1,122 @@
+name: Bump formula on new PyPI release
+
+on:
+  schedule:
+    - cron: "0 */2 * * *"  # every 2 hours
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea49d80121314f6a1864 # v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@8d9ed9ac5c53483de85588cdf95a591a75ab2f4f # v5.5.0
+        with:
+          python-version: "3.13"
+
+      - name: Check for new hol-guard version and bump formula
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # Get latest version from PyPI
+          LATEST=$(curl -fsSL "https://pypi.org/pypi/hol-guard/json" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          print(d['info']['version'])
+          ")
+
+          # Get current version from formula
+          CURRENT=$(grep -oP 'hol_guard-\K[0-9.]+' Formula/hol-guard.rb | head -1)
+          echo "Current formula version: ${CURRENT}"
+          echo "Latest PyPI version: ${LATEST}"
+
+          if [ "${CURRENT}" = "${LATEST}" ]; then
+            echo "Already up to date."
+            exit 0
+          fi
+
+          echo "New version detected. Fetching sdist details..."
+
+          # Get sdist URL and SHA256
+          read -r URL SHA < <(curl -fsSL "https://pypi.org/pypi/hol-guard/json" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          for f in d['urls']:
+              if f['packagetype'] == 'sdist':
+                  print(f['url'], f['digests']['sha256'])
+                  break
+          ")
+
+          if [ -z "${URL}" ] || [ -z "${SHA}" ]; then
+            echo "ERROR: Could not get sdist URL/SHA"
+            exit 1
+          fi
+
+          echo "New sdist URL: ${URL}"
+          echo "New sdist SHA: ${SHA}"
+
+          # Update formula: replace URL
+          python3 -c "
+          import re
+
+          with open('Formula/hol-guard.rb', 'r') as f:
+              content = f.read()
+
+          # Replace the URL line
+          content = re.sub(
+              r'(  url \")[^\"]+(\"\\n  sha256 \")[^\"]+(\"\n)',
+              r'\1${URL}\2${SHA}\3',
+              content
+          )
+
+          with open('Formula/hol-guard.rb', 'w') as f:
+              f.write(content)
+          "
+
+          # Verify the change took
+          if ! grep -q "${SHA}" Formula/hol-guard.rb; then
+            echo "ERROR: SHA not found in formula after patch"
+            exit 1
+          fi
+
+          # Also bump each dependency resource to latest
+          for dep in cisco-ai-skill-scanner cryptography keyring packaging requests rich; do
+            echo "Updating dependency: ${dep}"
+            read -r DEP_URL DEP_SHA < <(curl -fsSL "https://pypi.org/pypi/${dep}/json" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          for f in d['urls']:
+              if f['packagetype'] == 'sdist':
+                  print(f['url'], f['digests']['sha256'])
+                  break
+          ")
+            if [ -n "${DEP_URL}" ] && [ -n "${DEP_SHA}" ]; then
+              python3 -c "
+          import re
+          with open('Formula/hol-guard.rb', 'r') as f:
+              content = f.read()
+
+          # Replace within the resource block for this dep
+          pattern = r'(  resource \"${dep}\" do\n    url \")[^\"]+(\"\n    sha256 \")[^\"]+(\"\n)'
+          content = re.sub(pattern, r'\g<1>${DEP_URL}\g<2>${DEP_SHA}\g<3>', content)
+
+          with open('Formula/hol-guard.rb', 'w') as f:
+              f.write(content)
+          "
+            fi
+          done
+
+          # Commit and push
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/hol-guard.rb
+          git commit -m "bump: hol-guard ${LATEST}"
+          git push
+          echo "Pushed bump to ${LATEST}"
