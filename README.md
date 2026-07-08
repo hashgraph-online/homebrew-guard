@@ -1,11 +1,11 @@
-# homebrew-tap
+# homebrew-guard
 
-Homebrew tap for [HOL Guard](https://hol.org/guard) by [Hashgraph Online](https://github.com/hashgraph-online).
+Homebrew tap for [HOL Guard](https://hol.org/guard) by [HOL](https://hol.org).
 
 ## Install
 
 ```bash
-brew tap hashgraph-online/tap
+brew tap hol/guard
 brew install hol-guard
 ```
 
@@ -22,4 +22,3 @@ HOL Guard is a local-first security harness that protects AI coding agents (Code
 - [PyPI](https://pypi.org/project/hol-guard/)
 - [GitHub](https://github.com/hashgraph-online/hol-guard)
 - [Docs](https://hol.org/guard)
-
